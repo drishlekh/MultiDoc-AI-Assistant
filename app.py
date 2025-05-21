@@ -245,7 +245,7 @@ def setup_conversation_chain(vector_store):
     
     llm = ChatGroq(temperature=0.2, model_name="llama3-70b-8192", api_key=groq_api_key)
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key='answer')
-    return ConversationalRetrievalChain.from_llm(llm=llm, chain_type="stuff", retriever=vector_store.as_retriever(search_kwargs={"k": 3}), memory=memory, verbose=False, return_source_documents=True)
+    return ConversationalRetrievalChain.from_llm(llm=llm, chain_type="stuff", retriever=vector_store.as_retriever(search_kwargs={"k": 5}), memory=memory, verbose=False, return_source_documents=True)
 
 def handle_user_query(query):
     """
@@ -320,75 +320,11 @@ def save_uploaded_file(uploaded_file):
         return file_path
     except Exception as e: st.error(f"Error saving file '{uploaded_file.name}': {e}"); return None
 
-# def process_documents_for_rag():
-#     """
-#     Process all uploaded documents for RAG (Retrieval-Augmented Generation).
-#     Handles text extraction, OCR, and vector store creation with progress tracking.
-#     """
-#     if 'uploaded_files' not in st.session_state or not st.session_state.uploaded_files:
-#         st.warning("No documents uploaded yet to process for RAG!"); return None
-
-#     st.session_state.vector_store = None; st.session_state.conversation_chain = None
-#     st.session_state.messages = []; st.session_state.chat_history_tuples = []
-    
-#     unique_collection_name = f"rag_collection_{int(time.time())}"
-#     st.session_state.current_collection_name = unique_collection_name
-
-#     all_extracted_documents = []
-#     progress_bar = st.progress(0)
-#     total_files = len(st.session_state.uploaded_files)
-#     status_area = st.empty()
-
-#     for i, file_info in enumerate(st.session_state.uploaded_files):
-#         file_path, file_name, file_type = file_info['path'], file_info['name'], file_info['type']
-#         text = None
-#         status_area.info(f"Processing: {file_name} ({file_type}) [{i+1}/{total_files}]")
-#         try:
-#             if file_type == 'PDF':
-#                 text = extract_text_from_pdf_path(file_path, file_name)
-#                 if not text or len(text.strip()) < 50:
-#                     status_area.info(f"Direct PDF for '{file_name}' insufficient. OCR attempt... [{i+1}/{total_files}]")
-#                     with open(file_path, 'rb') as f_bytes: text = perform_ocr_on_pdf_bytes(f_bytes.read(), file_name)
-#             elif file_type == 'handwritten':
-#                 with open(file_path, 'rb') as f_bytes: file_bytes = f_bytes.read()
-#                 if file_path.lower().endswith('.pdf'):
-#                     status_area.info(f"OCR handwritten PDF: {file_name}... [{i+1}/{total_files}]")
-#                     text = perform_ocr_on_pdf_bytes(file_bytes, file_name)
-#                 else:
-#                     status_area.info(f"OCR handwritten image: {file_name}... [{i+1}/{total_files}]")
-#                     text = perform_ocr_on_image_bytes(file_bytes, file_name)
-#             elif file_type == 'Image':
-#                 status_area.info(f"OCR image: {file_name}... [{i+1}/{total_files}]")
-#                 with open(file_path, 'rb') as f_bytes: text = perform_ocr_on_image_bytes(f_bytes.read(), file_name)
-#             elif file_type == 'CSV': text = extract_text_from_csv_path(file_path)
-#             elif file_type == 'JSON': text = extract_text_from_json_path(file_path)
-#             elif file_type == 'website':
-#                 with open(file_path, 'r', encoding='utf-8') as f_text: text = f_text.read()
-            
-#             if text and text.strip(): all_extracted_documents.append({'name': file_name, 'type': file_type, 'text': text})
-#             elif text is None and (file_type == 'handwritten' or file_type == 'Image' or (file_type == 'PDF' and (not text or len(text.strip()) < 50))):
-#                 st.warning(f"OCR for '{file_name}' might have been skipped or failed (e.g., rate limit or API issue).")
-#             else: st.warning(f"No usable text from: {file_name}")
-#         except Exception as e: st.error(f"Error processing {file_name}: {e}")
-#         progress_bar.progress((i + 1) / total_files)
-        
-#     status_area.empty(); progress_bar.empty()
-#     if not all_extracted_documents:
-#         st.error("No text extracted. Vector store cannot be built."); return None
-    
-#     st.info(f"Text extraction complete. Building vector store: {unique_collection_name}...")
-#     with st.spinner("Generating vector embeddings..."):
-#         try:
-#             vector_mgr = VectorStoreManager(collection_name=unique_collection_name)
-#             vector_store = vector_mgr.create_or_update_vector_store(all_extracted_documents)
-#             st.session_state.vector_store = vector_store
-#             st.session_state.conversation_chain = setup_conversation_chain(vector_store)
-#             st.success(f"Vector store '{unique_collection_name}' ready with {len(all_extracted_documents)} docs!")
-#             return vector_store
-#         except Exception as e:
-#             st.error(f"Failed to create vector store: {e}"); return None
-# --- process_documents_for_rag (calls the rate-limited OCR functions) ---
 def process_documents_for_rag():
+    """
+    Process all uploaded documents for RAG (Retrieval-Augmented Generation).
+    Handles text extraction, OCR, and vector store creation with progress tracking.
+    """
     if 'uploaded_files' not in st.session_state or not st.session_state.uploaded_files:
         st.warning("No documents uploaded yet to process for RAG!"); return None
 
@@ -403,96 +339,44 @@ def process_documents_for_rag():
     total_files = len(st.session_state.uploaded_files)
     status_area = st.empty()
 
-    st.write("--- Starting Document Processing for RAG ---") # Debug Start
-
     for i, file_info in enumerate(st.session_state.uploaded_files):
         file_path, file_name, file_type = file_info['path'], file_info['name'], file_info['type']
-        text_content_for_vector_store = None # Use a distinct variable name for clarity
-        
+        text = None
         status_area.info(f"Processing: {file_name} ({file_type}) [{i+1}/{total_files}]")
-        st.write(f"DEBUG: Processing file {i+1}/{total_files}: {file_name} (Type: {file_type})") # Debug Line
-
         try:
-            if file_type == 'PDF': 
-                # Try direct extraction first for standard PDFs
-                extracted_text_direct = extract_text_from_pdf_path(file_path, file_name) 
-                
-                # Check if direct extraction was poor or if it's likely a scanned/image PDF
-                # A common heuristic is to check text length or for specific OCR markers if needed
-                if not extracted_text_direct or len(extracted_text_direct.strip()) < 100: # Arbitrary threshold for "poor"
-                    status_area.info(f"Direct PDF extraction for '{file_name}' insufficient or failed. Attempting OCR... [{i+1}/{total_files}]")
-                    st.write(f"DEBUG: PDF '{file_name}' - Direct extraction insufficient. Attempting OCR.") # Debug Line
-                    with open(file_path, 'rb') as f_bytes: 
-                        text_content_for_vector_store = perform_ocr_on_pdf_bytes(f_bytes.read(), file_name) 
-                    if text_content_for_vector_store:
-                         st.write(f"DEBUG: PDF '{file_name}' - OCR successful, length: {len(text_content_for_vector_store)}") # Debug Line
-                    else:
-                         st.write(f"DEBUG: PDF '{file_name}' - OCR failed or returned no text.") # Debug Line
-                else:
-                    text_content_for_vector_store = extracted_text_direct
-                    st.write(f"DEBUG: PDF '{file_name}' - Direct extraction successful, length: {len(text_content_for_vector_store)}") # Debug Line
-
-            elif file_type == 'handwritten': 
-                st.write(f"DEBUG: Handwritten file '{file_name}' - Starting OCR process.") # Debug Line
-                with open(file_path, 'rb') as f_bytes: 
-                    file_bytes_content = f_bytes.read()
+            if file_type == 'PDF':
+                text = extract_text_from_pdf_path(file_path, file_name)
+                if not text or len(text.strip()) < 50:
+                    status_area.info(f"Direct PDF for '{file_name}' insufficient. OCR attempt... [{i+1}/{total_files}]")
+                    with open(file_path, 'rb') as f_bytes: text = perform_ocr_on_pdf_bytes(f_bytes.read(), file_name)
+            elif file_type == 'handwritten':
+                with open(file_path, 'rb') as f_bytes: file_bytes = f_bytes.read()
                 if file_path.lower().endswith('.pdf'):
                     status_area.info(f"OCR handwritten PDF: {file_name}... [{i+1}/{total_files}]")
-                    text_content_for_vector_store = perform_ocr_on_pdf_bytes(file_bytes_content, file_name) 
-                else: # Image
+                    text = perform_ocr_on_pdf_bytes(file_bytes, file_name)
+                else:
                     status_area.info(f"OCR handwritten image: {file_name}... [{i+1}/{total_files}]")
-                    text_content_for_vector_store = perform_ocr_on_image_bytes(file_bytes_content, file_name) 
-                
-                if text_content_for_vector_store:
-                    st.write(f"DEBUG: Handwritten '{file_name}' - OCR successful, length: {len(text_content_for_vector_store)}") # Debug Line
-                else:
-                    st.write(f"DEBUG: Handwritten '{file_name}' - OCR failed or returned no text.") # Debug Line
-            
-            elif file_type == 'Image': 
-                st.write(f"DEBUG: Image file '{file_name}' - Starting OCR process.") # Debug Line
+                    text = perform_ocr_on_image_bytes(file_bytes, file_name)
+            elif file_type == 'Image':
                 status_area.info(f"OCR image: {file_name}... [{i+1}/{total_files}]")
-                with open(file_path, 'rb') as f_bytes: 
-                    text_content_for_vector_store = perform_ocr_on_image_bytes(f_bytes.read(), file_name) 
-                if text_content_for_vector_store:
-                    st.write(f"DEBUG: Image '{file_name}' - OCR successful, length: {len(text_content_for_vector_store)}") # Debug Line
-                else:
-                    st.write(f"DEBUG: Image '{file_name}' - OCR failed or returned no text.") # Debug Line
-
-            elif file_type == 'CSV': 
-                text_content_for_vector_store = extract_text_from_csv_path(file_path)
-                st.write(f"DEBUG: CSV '{file_name}' - Extracted length: {len(text_content_for_vector_store) if text_content_for_vector_store else 0}") # Debug
-            elif file_type == 'JSON': 
-                text_content_for_vector_store = extract_text_from_json_path(file_path)
-                st.write(f"DEBUG: JSON '{file_name}' - Extracted length: {len(text_content_for_vector_store) if text_content_for_vector_store else 0}") # Debug
+                with open(file_path, 'rb') as f_bytes: text = perform_ocr_on_image_bytes(f_bytes.read(), file_name)
+            elif file_type == 'CSV': text = extract_text_from_csv_path(file_path)
+            elif file_type == 'JSON': text = extract_text_from_json_path(file_path)
             elif file_type == 'website':
-                with open(file_path, 'r', encoding='utf-8') as f_text: 
-                    text_content_for_vector_store = f_text.read()
-                st.write(f"DEBUG: Website Text '{file_name}' - Extracted length: {len(text_content_for_vector_store) if text_content_for_vector_store else 0}") # Debug
+                with open(file_path, 'r', encoding='utf-8') as f_text: text = f_text.read()
             
-            # Check and add to documents list
-            if text_content_for_vector_store and text_content_for_vector_store.strip(): 
-                all_extracted_documents.append({'name': file_name, 'type': file_type, 'text': text_content_for_vector_store})
-                st.write(f"SUCCESS: Added '{file_name}' to RAG documents. Text length: {len(text_content_for_vector_store)}") # More visible success
-            elif text_content_for_vector_store is None and (file_type == 'handwritten' or file_type == 'Image' or (file_type == 'PDF' and (not extracted_text_direct or len(extracted_text_direct.strip()) < 100))):
-                # This means OCR was attempted (or direct PDF extraction was poor prompting OCR) but it returned None
-                st.warning(f"OCR for '{file_name}' (type: {file_type}) might have been skipped due to rate limit, or failed to extract text. It will not be included in the knowledge base.")
-            else: 
-                # Text was empty string or just whitespace, or it's a non-OCR type that yielded no text
-                st.warning(f"No usable text extracted from '{file_name}' (type: {file_type}). It will not be included in the knowledge base.")
-        
-        except Exception as e: 
-            st.error(f"Critical error processing file {file_name}: {e}")
-            st.write(f"DEBUG: Exception during processing of {file_name}: {e}") # Debug
-        
+            if text and text.strip(): all_extracted_documents.append({'name': file_name, 'type': file_type, 'text': text})
+            elif text is None and (file_type == 'handwritten' or file_type == 'Image' or (file_type == 'PDF' and (not text or len(text.strip()) < 50))):
+                st.warning(f"OCR for '{file_name}' might have been skipped or failed (e.g., rate limit or API issue).")
+            else: st.warning(f"No usable text from: {file_name}")
+        except Exception as e: st.error(f"Error processing {file_name}: {e}")
         progress_bar.progress((i + 1) / total_files)
         
     status_area.empty(); progress_bar.empty()
-    st.write(f"--- Document Processing Complete. {len(all_extracted_documents)} documents have extracted text. ---") # Debug End
-
     if not all_extracted_documents:
-        st.error("No text could be extracted from any documents. Vector store cannot be built."); return None
+        st.error("No text extracted. Vector store cannot be built."); return None
     
-    st.info(f"Text extraction phase complete. {len(all_extracted_documents)} documents ready for vector store: {unique_collection_name}...")
+    st.info(f"Text extraction complete. Building vector store: {unique_collection_name}...")
     with st.spinner("Generating vector embeddings..."):
         try:
             vector_mgr = VectorStoreManager(collection_name=unique_collection_name)
@@ -503,6 +387,118 @@ def process_documents_for_rag():
             return vector_store
         except Exception as e:
             st.error(f"Failed to create vector store: {e}"); return None
+# --- process_documents_for_rag (calls the rate-limited OCR functions) ---
+# def process_documents_for_rag():
+#     if 'uploaded_files' not in st.session_state or not st.session_state.uploaded_files:
+#         st.warning("No documents uploaded yet to process for RAG!"); return None
+
+#     st.session_state.vector_store = None; st.session_state.conversation_chain = None
+#     st.session_state.messages = []; st.session_state.chat_history_tuples = []
+    
+#     unique_collection_name = f"rag_collection_{int(time.time())}"
+#     st.session_state.current_collection_name = unique_collection_name
+
+#     all_extracted_documents = []
+#     progress_bar = st.progress(0)
+#     total_files = len(st.session_state.uploaded_files)
+#     status_area = st.empty()
+
+#     # st.write("--- Starting Document Processing for RAG ---") # Optional Debug Start
+
+#     for i, file_info in enumerate(st.session_state.uploaded_files):
+#         file_path, file_name, file_type = file_info['path'], file_info['name'], file_info['type']
+#         text_content_for_vector_store = None 
+        
+#         status_area.info(f"Processing: {file_name} ({file_type}) [{i+1}/{total_files}]")
+#         # st.write(f"DEBUG: Processing file {i+1}/{total_files}: {file_name} (Type: {file_type})") 
+
+#         try:
+#             if file_type == 'PDF': 
+#                 extracted_text_direct = extract_text_from_pdf_path(file_path, file_name) 
+#                 if not extracted_text_direct or len(extracted_text_direct.strip()) < 100:
+#                     status_area.info(f"Direct PDF extraction for '{file_name}' insufficient or failed. Attempting OCR... [{i+1}/{total_files}]")
+#                     # st.write(f"DEBUG: PDF '{file_name}' - Direct extraction insufficient. Attempting OCR.") 
+#                     with open(file_path, 'rb') as f_bytes: 
+#                         text_content_for_vector_store = perform_ocr_on_pdf_bytes(f_bytes.read(), file_name) 
+#                     # if text_content_for_vector_store:
+#                     #      st.write(f"DEBUG: PDF '{file_name}' - OCR successful, length: {len(text_content_for_vector_store)}") 
+#                     # else:
+#                     #      st.write(f"DEBUG: PDF '{file_name}' - OCR failed or returned no text.") 
+#                 else:
+#                     text_content_for_vector_store = extracted_text_direct
+#                     # st.write(f"DEBUG: PDF '{file_name}' - Direct extraction successful, length: {len(text_content_for_vector_store)}") 
+
+#             elif file_type == 'handwritten': 
+#                 # st.write(f"DEBUG: Handwritten file '{file_name}' - Starting OCR process.") 
+#                 with open(file_path, 'rb') as f_bytes: 
+#                     file_bytes_content = f_bytes.read()
+#                 if file_path.lower().endswith('.pdf'):
+#                     status_area.info(f"OCR handwritten PDF: {file_name}... [{i+1}/{total_files}]")
+#                     text_content_for_vector_store = perform_ocr_on_pdf_bytes(file_bytes_content, file_name) 
+#                 else: 
+#                     status_area.info(f"OCR handwritten image: {file_name}... [{i+1}/{total_files}]")
+#                     text_content_for_vector_store = perform_ocr_on_image_bytes(file_bytes_content, file_name) 
+                
+#                 # if text_content_for_vector_store:
+#                 #     st.write(f"DEBUG: Handwritten '{file_name}' - OCR successful, length: {len(text_content_for_vector_store)}") 
+#                 # else:
+#                 #     st.write(f"DEBUG: Handwritten '{file_name}' - OCR failed or returned no text.") 
+            
+#             elif file_type == 'Image': 
+#                 # st.write(f"DEBUG: Image file '{file_name}' - Starting OCR process.") 
+#                 status_area.info(f"OCR image: {file_name}... [{i+1}/{total_files}]")
+#                 with open(file_path, 'rb') as f_bytes: 
+#                     text_content_for_vector_store = perform_ocr_on_image_bytes(f_bytes.read(), file_name) 
+#                 # if text_content_for_vector_store:
+#                 #     st.write(f"DEBUG: Image '{file_name}' - OCR successful, length: {len(text_content_for_vector_store)}") 
+#                 # else:
+#                 #     st.write(f"DEBUG: Image '{file_name}' - OCR failed or returned no text.") 
+
+#             elif file_type == 'CSV': 
+#                 text_content_for_vector_store = extract_text_from_csv_path(file_path)
+#                 # st.write(f"DEBUG: CSV '{file_name}' - Extracted length: {len(text_content_for_vector_store) if text_content_for_vector_store else 0}") 
+#             elif file_type == 'JSON': 
+#                 text_content_for_vector_store = extract_text_from_json_path(file_path)
+#                 # st.write(f"DEBUG: JSON '{file_name}' - Extracted length: {len(text_content_for_vector_store) if text_content_for_vector_store else 0}") 
+#             elif file_type == 'website':
+#                 with open(file_path, 'r', encoding='utf-8') as f_text: 
+#                     text_content_for_vector_store = f_text.read()
+#                 # st.write(f"DEBUG: Website Text '{file_name}' - Extracted length: {len(text_content_for_vector_store) if text_content_for_vector_store else 0}") 
+            
+#             # --- MODIFICATION: Prepend filename to the text content ---
+#             if text_content_for_vector_store and text_content_for_vector_store.strip():
+#                 enriched_text_content = f"Content from document named: {file_name}\n\n---\n\n{text_content_for_vector_store}"
+#                 all_extracted_documents.append({'name': file_name, 'type': file_type, 'text': enriched_text_content})
+#                 # st.write(f"SUCCESS: Added '{file_name}' to RAG documents. Enriched text length: {len(enriched_text_content)}")
+#             # --- END OF MODIFICATION ---
+#             elif text_content_for_vector_store is None and (file_type == 'handwritten' or file_type == 'Image' or (file_type == 'PDF' and (not extracted_text_direct or len(extracted_text_direct.strip()) < 100 if 'extracted_text_direct' in locals() else True))):
+#                 st.warning(f"OCR for '{file_name}' (type: {file_type}) might have been skipped due to rate limit, or failed to extract text. It will not be included in the knowledge base.")
+#             else: 
+#                 st.warning(f"No usable text extracted from '{file_name}' (type: {file_type}). It will not be included in the knowledge base.")
+        
+#         except Exception as e: 
+#             st.error(f"Critical error processing file {file_name}: {e}")
+#             # st.write(f"DEBUG: Exception during processing of {file_name}: {e}") 
+        
+#         progress_bar.progress((i + 1) / total_files)
+        
+#     status_area.empty(); progress_bar.empty()
+#     # st.write(f"--- Document Processing Complete. {len(all_extracted_documents)} documents have extracted text. ---") 
+
+#     if not all_extracted_documents:
+#         st.error("No text could be extracted from any documents. Vector store cannot be built."); return None
+    
+#     st.info(f"Text extraction phase complete. {len(all_extracted_documents)} documents ready for vector store: {unique_collection_name}...")
+#     with st.spinner("Generating vector embeddings..."):
+#         try:
+#             vector_mgr = VectorStoreManager(collection_name=unique_collection_name)
+#             vector_store = vector_mgr.create_or_update_vector_store(all_extracted_documents)
+#             st.session_state.vector_store = vector_store
+#             st.session_state.conversation_chain = setup_conversation_chain(vector_store)
+#             st.success(f"Vector store '{unique_collection_name}' ready with {len(all_extracted_documents)} docs!")
+#             return vector_store
+#         except Exception as e:
+#             st.error(f"Failed to create vector store: {e}"); return None
 
 
 
