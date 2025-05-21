@@ -9,6 +9,8 @@ pdf2image
 Pillow
 langchain-groq
 langchain
-chroma-hnswlib
+langchain-community  
+chroma-hnswlib       
 sentence-transformers
-huggingface_hub 
+huggingface_hub
+tiktoken             
