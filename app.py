@@ -398,7 +398,7 @@ def main():
                                 file_type_str = {"application/pdf": "PDF", "text/csv": "CSV", "application/json": "JSON"}.get(uploaded_file.type, "Image" if uploaded_file.type.startswith('image/') else "Unknown")
                                 st.session_state.uploaded_files.append({"name": uploaded_file.name, "type": file_type_str, "path": file_path, "size": f"{uploaded_file.size / (1024*1024):.2f} MB"})
                                 new_files_added=True
-                    if new_files_added: st.experimental_rerun()
+                    if new_files_added: st.rerun()
             with tab_website: # Website URL Logic
                 website_url = st.text_input("Enter website URL", key="website_url_input_sidebar")
                 if st.button("Add Website URL", key="add_website_button_sidebar"):
@@ -409,7 +409,7 @@ def main():
                             try:
                                 with open(fp,"w",encoding="utf-8") as f: f.write(text)
                                 st.session_state.uploaded_files.append({"name":website_url,"type":"website","path":fp,"size":f"{len(text)/(1024*1024):.2f} MB"})
-                                st.experimental_rerun()
+                                st.rerun()
                             except Exception as e: st.error(f"Could not save website text: {e}")
                         else: st.error(f"Could not extract text from {website_url}")
                     elif not website_url: st.warning("Please enter a URL.")
@@ -421,7 +421,7 @@ def main():
                         file_path = save_uploaded_file(handwritten_file)
                         if file_path:
                             st.session_state.uploaded_files.append({"name":handwritten_file.name,"type":"handwritten","path":file_path,"size":f"{handwritten_file.size/(1024*1024):.2f} MB"})
-                            st.experimental_rerun()
+                            st.rerun()
                     else: st.warning(f"File {handwritten_file.name} already in list.")
         st.subheader("2. Manage Source List")
         if st.session_state.uploaded_files: # Manage Source List Display
@@ -439,7 +439,7 @@ def main():
                     try: 
                         if os.path.exists(rm_file['path']): os.remove(rm_file['path'])
                     except Exception as e: st.error(f"Error removing file '{rm_file['name']}': {e}")
-                st.experimental_rerun()
+                st.rerun()
             st.markdown("---") # Process Button
             if st.button("⚙️ Process Sources for Chat",type="primary",use_container_width=True,disabled=not st.session_state.uploaded_files): process_documents_for_rag()
         else: st.info("Upload documents via tabs above to begin.")
@@ -473,7 +473,7 @@ def main():
             assistant_ts=datetime.datetime.now()
             if answer is not None: st.session_state.messages.append({"role":"assistant","content":answer,"sources":sources,"timestamp":assistant_ts})
             else: st.session_state.messages.append({"role":"assistant","content":"Sorry, I encountered an issue. Please try again.","timestamp":assistant_ts})
-            st.experimental_rerun()
+            st.rerun()
 
 if __name__ == "__main__":
     main()
