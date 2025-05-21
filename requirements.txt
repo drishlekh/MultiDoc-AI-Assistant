@@ -1,11 +1,28 @@
-beautifulsoup4==4.12.3
-langchain==0.3.25
-langchain-community==0.3.24
-langchain-groq==0.3.2
-pandas==2.2.1
-pdf2image==1.17.0
-protobuf==5.29.4
-PyPDF2==3.0.1
-python-dotenv==1.0.1
-requests==2.31.0
+# Core Requirements
 streamlit==1.33.0
+python-dotenv==1.0.0
+
+# Document Processing
+PyPDF2==3.0.1
+pdf2image==1.17.0
+pandas==2.2.1
+beautifulsoup4==4.12.2
+Pillow==10.3.0
+
+# Google Vision OCR
+google-cloud-vision==3.4.6
+requests==2.31.0
+
+# Vector Database & Embeddings
+langchain-community==0.0.34
+chromadb==0.4.24
+sentence-transformers==2.7.0
+tiktoken==0.6.0
+
+# LLM Integration
+langchain-groq==0.1.1
+groq==0.3.0
+
+# Text Processing
+langchain==0.1.16
+langchain-text-splitters==0.0.1
