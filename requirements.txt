@@ -9,8 +9,8 @@ pdf2image
 Pillow
 langchain-groq
 langchain
-langchain-community  
-chroma-hnswlib       
+langchain-community  # Explicitly add this for Chroma and other community integrations
+chroma-hnswlib       # For the Chroma vector store
 sentence-transformers
 huggingface_hub
-tiktoken             
+tiktoken             # Good to have for Langchain text splitters
