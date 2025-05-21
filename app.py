@@ -1,4 +1,5 @@
-
+# Attempt to use pysqlite3 for enhanced SQLite features when available
+# This provides better compatibility with newer SQLite functionality
 try:
     __import__('pysqlite3')
     import sys
@@ -6,8 +7,8 @@ try:
     print("Successfully patched sqlite3 with pysqlite3-binary.")
 except ImportError:
     print("pysqlite3-binary not found or import failed. Using system sqlite3.")
-# --- END HACK ---
 
+# Import all required libraries for document processing, vision, and chat functionality
 import os
 import streamlit as st
 from PyPDF2 import PdfReader
@@ -16,23 +17,21 @@ import json
 import requests
 from bs4 import BeautifulSoup
 from io import BytesIO
-# Removed: from dotenv import load_dotenv
 from google.cloud import vision
 from pdf2image import convert_from_bytes
 import time
 import datetime
-# Removed: from streamlit.web.server.server import Server
+
 from collections import defaultdict
-import tempfile # Added for Google Credentials
+import tempfile 
 
 from vector_store import VectorStoreManager
 from langchain_groq import ChatGroq
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-# --- Google Cloud Credentials Setup for Streamlit Cloud ---
-# This should run once when the script starts.
-# Check if the specific secret for Google credentials exists.
+# Configure Google Cloud credentials from Streamlit secrets if available
+# Creates temporary credentials file for secure access to Google services
 if hasattr(st, 'secrets') and "GOOGLE_CREDENTIALS_JSON_CONTENT" in st.secrets:
     try:
         google_creds_content = st.secrets["GOOGLE_CREDENTIALS_JSON_CONTENT"]
@@ -47,29 +46,25 @@ if hasattr(st, 'secrets') and "GOOGLE_CREDENTIALS_JSON_CONTENT" in st.secrets:
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmpfile.name
             
     except json.JSONDecodeError:
-        # Error if the secret content is not valid JSON
-        # This will likely cause get_vision_client() to fail later and show an error.
         print("ERROR: GOOGLE_CREDENTIALS_JSON_CONTENT from st.secrets is not valid JSON.")
     except Exception as e:
         print(f"ERROR setting up Google Cloud credentials: {e}")
-# If GOOGLE_CREDENTIALS_JSON_CONTENT is not in st.secrets,
-# the application will rely on other methods for authentication (e.g., local ADC).
 
-# Removed: load_dotenv()
-
-# Create data directory if it doesn't exist
+# Create necessary directories for storing data and vector databases
 os.makedirs("data", exist_ok=True)
 os.makedirs("vector_db", exist_ok=True)
 
-# --- Rate Limiting Configuration ---
+# Configure rate limiting for OCR operations to prevent excessive usage
 OCR_PAGE_LIMIT_PER_SESSION = 25 # Max OCR pages per user session
 if 'ocr_page_counts' not in st.session_state:
     st.session_state.ocr_page_counts = defaultdict(lambda: {'count': 0, 'last_reset': datetime.date.today()})
 
-# Removed get_client_ip() function
-
-def check_and_update_ocr_limit(session_id, pages_to_process): # Changed ip_or_session_id to session_id
-    """Checks if the OCR page limit has been reached for the given session_id and updates it."""
+def check_and_update_ocr_limit(session_id, pages_to_process):
+    """
+    Verify if the user has remaining OCR capacity for their session.
+    Checks daily limits and prevents processing if quota exceeded.
+    Returns True if processing can proceed, False if limit reached.
+    """
     today = datetime.date.today()
     
     if st.session_state.ocr_page_counts[session_id]['last_reset'] != today:
@@ -84,8 +79,11 @@ def check_and_update_ocr_limit(session_id, pages_to_process): # Changed ip_or_se
     
     return True
 
-def increment_ocr_count(session_id, pages_processed): # Changed ip_or_session_id to session_id
-    """Increments the OCR page count for the given session_id."""
+def increment_ocr_count(session_id, pages_processed):
+    """
+    Track successful OCR operations by updating the user's session count.
+    Automatically resets counts at daily boundaries.
+    """
     today = datetime.date.today()
     if st.session_state.ocr_page_counts[session_id]['last_reset'] != today:
         st.session_state.ocr_page_counts[session_id]['count'] = 0
@@ -93,8 +91,6 @@ def increment_ocr_count(session_id, pages_processed): # Changed ip_or_session_id
     
     st.session_state.ocr_page_counts[session_id]['count'] += pages_processed
 
-
-# --- Custom CSS for Chat UI (remains the same) ---
 def load_css():
     st.markdown("""
     <style>
@@ -145,19 +141,25 @@ def load_css():
     </style>
     """, unsafe_allow_html=True)
 
-
 @st.cache_resource
 def get_vision_client():
+    """
+    Initialize and cache the Google Vision client for OCR operations.
+    Handles errors gracefully and provides user feedback if initialization fails.
+    """
     try:
         client = vision.ImageAnnotatorClient()
         return client
     except Exception as e:
         st.error(f"Failed to initialize Google Vision client: {e}")
-        st.warning("OCR functionality will be unavailable. Ensure GOOGLE_APPLICATION_CREDENTIALS is set correctly (e.g., via st.secrets in Streamlit Cloud or environment variable locally).")
+        st.warning("OCR functionality will be unavailable. Ensure GOOGLE_APPLICATION_CREDENTIALS is set correctly.")
         return None
 
 def perform_ocr_on_image_bytes(image_bytes, filename_for_log="image"):
-    # Use session_id for rate limiting
+    """
+    Process an image through Google Vision OCR.
+    Handles rate limiting and returns extracted text if successful.
+    """
     session_id = st.session_state.session_id
     
     if not check_and_update_ocr_limit(session_id, 1):
@@ -180,7 +182,10 @@ def perform_ocr_on_image_bytes(image_bytes, filename_for_log="image"):
         return None
 
 def perform_ocr_on_pdf_bytes(pdf_bytes, filename_for_log=""):
-    # Use session_id for rate limiting
+    """
+    Convert PDF pages to images and perform OCR on each page.
+    Manages page limits and combines results into a single text output.
+    """
     session_id = st.session_state.session_id
     client = get_vision_client()
     if not client: return None
@@ -214,6 +219,10 @@ def perform_ocr_on_pdf_bytes(pdf_bytes, filename_for_log=""):
         return None
 
 def perform_ocr_on_image_bytes_internal(image_bytes, vision_client, filename_for_log="image"):
+    """
+    Internal OCR processing function without rate limiting checks.
+    Used by the PDF OCR function for individual page processing.
+    """
     try:
         image = vision.Image(content=image_bytes)
         response = vision_client.text_detection(image=image)
@@ -224,20 +233,25 @@ def perform_ocr_on_image_bytes_internal(image_bytes, vision_client, filename_for
         return None
 
 def setup_conversation_chain(vector_store):
-    # Use st.secrets for API key
+    """
+    Configure the conversational AI chain with Groq's language model.
+    Sets up memory and retrieval components for contextual chat.
+    """
     groq_api_key = None
     if hasattr(st, 'secrets') and "GROQ_API_KEY" in st.secrets:
         groq_api_key = st.secrets["GROQ_API_KEY"]
     else:
         st.error("GROQ_API_KEY not found in Streamlit Secrets. Please add it to your app secrets.")
-        # Fallback or raise error if preferred
-        # For now, it will likely fail when ChatGroq tries to initialize without a key
     
     llm = ChatGroq(temperature=0.2, model_name="llama3-70b-8192", api_key=groq_api_key)
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key='answer')
     return ConversationalRetrievalChain.from_llm(llm=llm, chain_type="stuff", retriever=vector_store.as_retriever(search_kwargs={"k": 3}), memory=memory, verbose=False, return_source_documents=True)
 
 def handle_user_query(query):
+    """
+    Process user questions through the conversation chain.
+    Maintains chat history and handles response generation errors.
+    """
     if 'conversation_chain' not in st.session_state or st.session_state.conversation_chain is None:
         st.warning("Conversation chain not initialized. Please process documents first."); return None, None
     with st.spinner("Thinking..."):
@@ -250,6 +264,10 @@ def handle_user_query(query):
         except Exception as e: st.error(f"Error generating response: {str(e)}"); return None, []
 
 def extract_text_from_pdf_path(file_path, filename_for_log=""):
+    """
+    Extract text from PDF files using PyPDF2.
+    Handles the first 10 pages by default and formats the output.
+    """
     try:
         with open(file_path, 'rb') as f:
             pdf_reader = PdfReader(f); text = ""
@@ -260,16 +278,28 @@ def extract_text_from_pdf_path(file_path, filename_for_log=""):
     except Exception as e: st.error(f"Error in PDF text extraction for '{filename_for_log}': {e}"); return None
 
 def extract_text_from_csv_path(file_path):
+    """
+    Read CSV files and convert to string representation.
+    Preserves tabular structure for language model processing.
+    """
     try: df = pd.read_csv(file_path); return df.to_string()
     except Exception as e: st.error(f"Error extracting text from CSV '{os.path.basename(file_path)}': {e}"); return None
 
 def extract_text_from_json_path(file_path):
+    """
+    Parse JSON files and return formatted string output.
+    Maintains JSON structure with indentation for readability.
+    """
     try:
         with open(file_path, 'r', encoding='utf-8') as f: data = json.load(f)
         return json.dumps(data, indent=2)
     except Exception as e: st.error(f"Error extracting text from JSON '{os.path.basename(file_path)}': {e}"); return None
 
 def extract_text_from_url(url):
+    """
+    Scrape and clean text content from web pages.
+    Handles HTTP requests and removes scripts/styles from HTML.
+    """
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}; response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status(); soup = BeautifulSoup(response.text, 'html.parser')
@@ -280,6 +310,10 @@ def extract_text_from_url(url):
     except Exception as e: st.error(f"Error extracting text from URL '{url}': {e}"); return None
 
 def save_uploaded_file(uploaded_file):
+    """
+    Save uploaded files to local storage.
+    Creates necessary directories and handles file write operations.
+    """
     file_path = os.path.join("data", uploaded_file.name)
     try:
         with open(file_path, "wb") as f: f.write(uploaded_file.getbuffer())
@@ -287,6 +321,10 @@ def save_uploaded_file(uploaded_file):
     except Exception as e: st.error(f"Error saving file '{uploaded_file.name}': {e}"); return None
 
 def process_documents_for_rag():
+    """
+    Process all uploaded documents for RAG (Retrieval-Augmented Generation).
+    Handles text extraction, OCR, and vector store creation with progress tracking.
+    """
     if 'uploaded_files' not in st.session_state or not st.session_state.uploaded_files:
         st.warning("No documents uploaded yet to process for RAG!"); return None
 
@@ -351,6 +389,10 @@ def process_documents_for_rag():
             st.error(f"Failed to create vector store: {e}"); return None
 
 def display_chat_message(role, content, sources=None, timestamp=None):
+    """
+    Render chat messages with appropriate styling and formatting.
+    Handles user/assistant differentiation and source document display.
+    """
     avatar_char = "U" if role == "user" else "A"; message_class = "user-message" if role == "user" else "assistant-message"
     avatar_html = f"<div class='avatar'>{avatar_char}</div>"
     formatted_timestamp = timestamp.strftime("%I:%M %p, %b %d") if timestamp else ""
@@ -370,6 +412,10 @@ def display_chat_message(role, content, sources=None, timestamp=None):
             st.markdown("</div>", unsafe_allow_html=True)
 
 def main():
+    """
+    Main application function that sets up the Streamlit interface.
+    Manages document uploads, processing, and chat interactions.
+    """
     st.set_page_config(layout="wide", page_title="Document RAG Chatbot"); load_css() 
     st.title("📄 Intelligent Document Assistant")
     st.markdown("Upload documents, websites, or handwritten notes to build a knowledge base, then chat with it. Each 'Process' action creates a fresh knowledge base.")
@@ -411,7 +457,7 @@ def main():
                             try:
                                 with open(fp,"w",encoding="utf-8") as f: f.write(text)
                                 st.session_state.uploaded_files.append({"name":website_url,"type":"website","path":fp,"size":f"{len(text)/(1024*1024):.2f} MB"})
-                                st.experimental_rerun() # Corrected from st.experimental_rerun()
+                                st.rerun()
                             except Exception as e: st.error(f"Could not save website text: {e}")
                         else: st.error(f"Could not extract text from {website_url}")
                     elif not website_url: st.warning("Please enter a URL.")
@@ -423,7 +469,7 @@ def main():
                         file_path = save_uploaded_file(handwritten_file)
                         if file_path:
                             st.session_state.uploaded_files.append({"name":handwritten_file.name,"type":"handwritten","path":file_path,"size":f"{handwritten_file.size/(1024*1024):.2f} MB"})
-                            st.rerun() # Corrected from st.experimental_rerun()
+                            st.rerun()
                     else: st.warning(f"File {handwritten_file.name} already in list.")
         st.subheader("2. Manage Source List")
         if st.session_state.uploaded_files:
@@ -441,7 +487,7 @@ def main():
                     try: 
                         if os.path.exists(rm_file['path']): os.remove(rm_file['path'])
                     except Exception as e: st.error(f"Error removing file '{rm_file['name']}': {e}")
-                st.rerun() # Corrected from st.experimental_rerun()
+                st.rerun()
             st.markdown("---")
             if st.button("⚙️ Process Sources for Chat",type="primary",use_container_width=True,disabled=not st.session_state.uploaded_files): process_documents_for_rag()
         else: st.info("Upload documents via tabs above to begin.")
@@ -475,12 +521,40 @@ def main():
             assistant_ts=datetime.datetime.now()
             if answer is not None: st.session_state.messages.append({"role":"assistant","content":answer,"sources":sources,"timestamp":assistant_ts})
             else: st.session_state.messages.append({"role":"assistant","content":"Sorry, I encountered an issue. Please try again.","timestamp":assistant_ts})
-            st.rerun() # Corrected from st.experimental_rerun()
+            st.rerun()
 
 if __name__ == "__main__":
     main()
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# # SQLite Patch Section
+# # This section attempts to use pysqlite3-binary instead of the system sqlite3
+# # This is often needed when working with newer SQLite features that aren't available in the system version
+# try:
+#     __import__('pysqlite3')
+#     import sys
+#     sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+#     print("Successfully patched sqlite3 with pysqlite3-binary.")
+# except ImportError:
+#     print("pysqlite3-binary not found or import failed. Using system sqlite3.")
+
+# # Importing necessary libraries for the application
 # import os
 # import streamlit as st
 # from PyPDF2 import PdfReader
@@ -489,80 +563,76 @@ if __name__ == "__main__":
 # import requests
 # from bs4 import BeautifulSoup
 # from io import BytesIO
-# from dotenv import load_dotenv
 # from google.cloud import vision
 # from pdf2image import convert_from_bytes
-# import time 
-# import datetime 
-# # For IP address (best effort)
-# from streamlit.web.server.server import Server 
-# # For rate limiting state
+# import time
+# import datetime
+
 # from collections import defaultdict
+# import tempfile 
 
 # from vector_store import VectorStoreManager
 # from langchain_groq import ChatGroq
 # from langchain.chains import ConversationalRetrievalChain
 # from langchain.memory import ConversationBufferMemory
 
-# # Load environment variables
-# load_dotenv()
+# # Google Cloud Credentials Setup
+# # This section handles the setup of Google Cloud credentials for Streamlit Cloud deployment
+# # It creates a temporary credentials file from secrets if available
+# if hasattr(st, 'secrets') and "GOOGLE_CREDENTIALS_JSON_CONTENT" in st.secrets:
+#     try:
+#         google_creds_content = st.secrets["GOOGLE_CREDENTIALS_JSON_CONTENT"]
+        
+#         if isinstance(google_creds_content, str):
+#             credentials_dict = json.loads(google_creds_content)
+#         else:
+#             credentials_dict = google_creds_content # Assume it's already a dict
 
-# # Create data directory if it doesn't exist
+#         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmpfile:
+#             json.dump(credentials_dict, tmpfile)
+#             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmpfile.name
+            
+#     except json.JSONDecodeError:
+#         print("ERROR: GOOGLE_CREDENTIALS_JSON_CONTENT from st.secrets is not valid JSON.")
+#     except Exception as e:
+#         print(f"ERROR setting up Google Cloud credentials: {e}")
+
+
+
 # os.makedirs("data", exist_ok=True)
 # os.makedirs("vector_db", exist_ok=True)
 
 # # --- Rate Limiting Configuration ---
 # OCR_PAGE_LIMIT_PER_SESSION = 25 # Max OCR pages per user session
-# # Global dictionary to store page counts per IP/session_id (in-memory, resets on app restart)
-# # For a more robust solution, use Redis or a database
 # if 'ocr_page_counts' not in st.session_state:
 #     st.session_state.ocr_page_counts = defaultdict(lambda: {'count': 0, 'last_reset': datetime.date.today()})
 
-# def get_client_ip():
-#     """Tries to get the client's IP address. Highly dependent on deployment."""
-#     try:
-#         session_info = Server.get_current()._get_session_info()
-#         if session_info and hasattr(session_info, "ws") and hasattr(session_info.ws, "request"):
-#              # This path might change with Streamlit versions or not be available
-#             request = session_info.ws.request
-#             # Check for common headers used by proxies
-#             if "X-Forwarded-For" in request.headers:
-#                 return request.headers["X-Forwarded-For"].split(',')[0].strip()
-#             if "X-Real-IP" in request.headers:
-#                 return request.headers["X-Real-IP"].strip()
-#             if hasattr(request, "remote_ip"): # Fallback for direct connection (dev)
-#                 return request.remote_ip
-#     except Exception:
-#         pass # Silently fail if IP cannot be retrieved
-#     return "unknown_ip" # Fallback
+# # Removed get_client_ip() function
 
-# def check_and_update_ocr_limit(ip_or_session_id, pages_to_process):
-#     """Checks if the OCR page limit has been reached for the given ID and updates it."""
+# def check_and_update_ocr_limit(session_id, pages_to_process): # Changed ip_or_session_id to session_id
+#     """Checks if the OCR page limit has been reached for the given session_id and updates it."""
 #     today = datetime.date.today()
     
-#     # Reset count if it's a new day
-#     if st.session_state.ocr_page_counts[ip_or_session_id]['last_reset'] != today:
-#         st.session_state.ocr_page_counts[ip_or_session_id]['count'] = 0
-#         st.session_state.ocr_page_counts[ip_or_session_id]['last_reset'] = today
+#     if st.session_state.ocr_page_counts[session_id]['last_reset'] != today:
+#         st.session_state.ocr_page_counts[session_id]['count'] = 0
+#         st.session_state.ocr_page_counts[session_id]['last_reset'] = today
 
-#     current_count = st.session_state.ocr_page_counts[ip_or_session_id]['count']
+#     current_count = st.session_state.ocr_page_counts[session_id]['count']
     
 #     if current_count + pages_to_process > OCR_PAGE_LIMIT_PER_SESSION:
 #         st.error(f"OCR page limit ({OCR_PAGE_LIMIT_PER_SESSION} pages per session/day) reached. You have processed {current_count} pages. Please try again later or with fewer pages.")
-#         return False # Limit reached
+#         return False
     
-#     # If not reached, allow and update (this update happens *after* successful OCR in the calling function)
-#     return True # Limit not reached
+#     return True
 
-# def increment_ocr_count(ip_or_session_id, pages_processed):
-#     """Increments the OCR page count for the given ID."""
-#     # Ensure daily reset logic is applied before incrementing
+# def increment_ocr_count(session_id, pages_processed): # Changed ip_or_session_id to session_id
+#     """Increments the OCR page count for the given session_id."""
 #     today = datetime.date.today()
-#     if st.session_state.ocr_page_counts[ip_or_session_id]['last_reset'] != today:
-#         st.session_state.ocr_page_counts[ip_or_session_id]['count'] = 0
-#         st.session_state.ocr_page_counts[ip_or_session_id]['last_reset'] = today
+#     if st.session_state.ocr_page_counts[session_id]['last_reset'] != today:
+#         st.session_state.ocr_page_counts[session_id]['count'] = 0
+#         st.session_state.ocr_page_counts[session_id]['last_reset'] = today
     
-#     st.session_state.ocr_page_counts[ip_or_session_id]['count'] += pages_processed
+#     st.session_state.ocr_page_counts[session_id]['count'] += pages_processed
 
 
 # # --- Custom CSS for Chat UI (remains the same) ---
@@ -617,7 +687,6 @@ if __name__ == "__main__":
 #     """, unsafe_allow_html=True)
 
 
-# # Initialize Google Vision client
 # @st.cache_resource
 # def get_vision_client():
 #     try:
@@ -625,16 +694,15 @@ if __name__ == "__main__":
 #         return client
 #     except Exception as e:
 #         st.error(f"Failed to initialize Google Vision client: {e}")
-#         st.warning("OCR functionality will be unavailable. Ensure GOOGLE_APPLICATION_CREDENTIALS is set correctly.")
+#         st.warning("OCR functionality will be unavailable. Ensure GOOGLE_APPLICATION_CREDENTIALS is set correctly (e.g., via st.secrets in Streamlit Cloud or environment variable locally).")
 #         return None
 
-# # --- OCR Functions with Rate Limiting ---
 # def perform_ocr_on_image_bytes(image_bytes, filename_for_log="image"):
-#     client_ip = get_client_ip() # Or use st.session_state.session_id if IP is unreliable
+#     # Use session_id for rate limiting
+#     session_id = st.session_state.session_id
     
-#     # Check limit for 1 page (since it's one image)
-#     if not check_and_update_ocr_limit(client_ip, 1):
-#         return None # Limit reached
+#     if not check_and_update_ocr_limit(session_id, 1):
+#         return None 
 
 #     client = get_vision_client()
 #     if not client: return None
@@ -646,44 +714,40 @@ if __name__ == "__main__":
 #             return None
 #         text = response.text_annotations[0].description if response.text_annotations else None
 #         if text:
-#             increment_ocr_count(client_ip, 1) # Increment count on successful OCR
+#             increment_ocr_count(session_id, 1)
 #         return text
 #     except Exception as e:
 #         st.error(f"OCR processing error for '{filename_for_log}': {e}")
 #         return None
 
 # def perform_ocr_on_pdf_bytes(pdf_bytes, filename_for_log=""):
-#     client_ip = get_client_ip() # Or use st.session_state.session_id
+#     # Use session_id for rate limiting
+#     session_id = st.session_state.session_id
 #     client = get_vision_client()
 #     if not client: return None
     
 #     try:
-#         # Determine number of pages to process (up to 10 as before)
-#         # This is a bit tricky as convert_from_bytes loads all images first.
-#         # We'll convert, then check against remaining quota.
-#         # For a very large PDF, this might still load many images into memory before stopping.
-#         temp_images_for_page_count = convert_from_bytes(pdf_bytes, last_page=10, thread_count=1, fmt='jpeg', size=(100,None)) # Minimal conversion for count
+#         temp_images_for_page_count = convert_from_bytes(pdf_bytes, last_page=10, thread_count=1, fmt='jpeg', size=(100,None))
 #         num_pages_to_ocr = len(temp_images_for_page_count)
-#         del temp_images_for_page_count # Free memory
+#         del temp_images_for_page_count
 
-#         if not check_and_update_ocr_limit(client_ip, num_pages_to_ocr):
-#             return None # Limit reached before processing
+#         if not check_and_update_ocr_limit(session_id, num_pages_to_ocr):
+#             return None
 
-#         images = convert_from_bytes(pdf_bytes, first_page=1, last_page=num_pages_to_ocr) # Actual conversion
+#         images = convert_from_bytes(pdf_bytes, first_page=1, last_page=num_pages_to_ocr)
 #         full_text = ""
 #         pages_successfully_ocred = 0
         
 #         for i, image in enumerate(images):
-#             # No need to check limit per page here again, already checked for the batch
 #             byte_arr = BytesIO()
 #             image.save(byte_arr, format='PNG')
-#             text_from_page = perform_ocr_on_image_bytes_internal(byte_arr.getvalue(), client, f"{filename_for_log} page {i+1}") # Internal call without re-checking limit
+#             text_from_page = perform_ocr_on_image_bytes_internal(byte_arr.getvalue(), client, f"{filename_for_log} page {i+1}")
 #             if text_from_page:
 #                 full_text += f"\n--- Page {i + 1} (OCR from {filename_for_log}) ---\n{text_from_page}"
 #                 pages_successfully_ocred += 1
         
 #         if pages_successfully_ocred > 0:
-#             increment_ocr_count(client_ip, pages_successfully_ocred) # Increment count for successfully OCR'd pages
+#             increment_ocr_count(session_id, pages_successfully_ocred)
         
 #         return full_text if full_text.strip() else None
 #     except Exception as e:
@@ -691,23 +755,26 @@ if __name__ == "__main__":
 #         return None
 
 # def perform_ocr_on_image_bytes_internal(image_bytes, vision_client, filename_for_log="image"):
-#     """Internal OCR function that doesn't do rate limit checks itself."""
-#     # This function is called by perform_ocr_on_pdf_bytes after the batch limit check.
 #     try:
 #         image = vision.Image(content=image_bytes)
-#         response = vision_client.text_detection(image=image) # Use passed client
+#         response = vision_client.text_detection(image=image)
 #         if response.error.message:
-#             # st.error(f"Internal OCR Error for '{filename_for_log}': {response.error.message}") # Avoid too many errors
 #             return None
 #         return response.text_annotations[0].description if response.text_annotations else None
 #     except Exception:
-#         # st.error(f"Internal OCR processing error for '{filename_for_log}': {e}")
 #         return None
 
-
-# # ... (setup_conversation_chain, handle_user_query, other extract_... functions, save_uploaded_file remain the same)
 # def setup_conversation_chain(vector_store):
-#     llm = ChatGroq(temperature=0.2, model_name="llama3-70b-8192", api_key=os.environ.get("GROQ_API_KEY"))
+#     # Use st.secrets for API key
+#     groq_api_key = None
+#     if hasattr(st, 'secrets') and "GROQ_API_KEY" in st.secrets:
+#         groq_api_key = st.secrets["GROQ_API_KEY"]
+#     else:
+#         st.error("GROQ_API_KEY not found in Streamlit Secrets. Please add it to your app secrets.")
+#         # Fallback or raise error if preferred
+#         # For now, it will likely fail when ChatGroq tries to initialize without a key
+    
+#     llm = ChatGroq(temperature=0.2, model_name="llama3-70b-8192", api_key=groq_api_key)
 #     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key='answer')
 #     return ConversationalRetrievalChain.from_llm(llm=llm, chain_type="stuff", retriever=vector_store.as_retriever(search_kwargs={"k": 3}), memory=memory, verbose=False, return_source_documents=True)
 
@@ -760,10 +827,6 @@ if __name__ == "__main__":
 #         return file_path
 #     except Exception as e: st.error(f"Error saving file '{uploaded_file.name}': {e}"); return None
 
-
-# # --- process_documents_for_rag (calls the rate-limited OCR functions) ---
-# # This function's core logic (looping through files and calling extraction) remains largely the same,
-# # but now the OCR calls within it are rate-limited.
 # def process_documents_for_rag():
 #     if 'uploaded_files' not in st.session_state or not st.session_state.uploaded_files:
 #         st.warning("No documents uploaded yet to process for RAG!"); return None
@@ -784,22 +847,22 @@ if __name__ == "__main__":
 #         text = None
 #         status_area.info(f"Processing: {file_name} ({file_type}) [{i+1}/{total_files}]")
 #         try:
-#             if file_type == 'PDF': # For PDF, direct extraction first, then OCR if needed (OCR is rate-limited)
-#                 text = extract_text_from_pdf_path(file_path, file_name) # Not rate-limited
+#             if file_type == 'PDF':
+#                 text = extract_text_from_pdf_path(file_path, file_name)
 #                 if not text or len(text.strip()) < 50:
 #                     status_area.info(f"Direct PDF for '{file_name}' insufficient. OCR attempt... [{i+1}/{total_files}]")
-#                     with open(file_path, 'rb') as f_bytes: text = perform_ocr_on_pdf_bytes(f_bytes.read(), file_name) # Rate-limited
-#             elif file_type == 'handwritten': # Directly uses rate-limited OCR
+#                     with open(file_path, 'rb') as f_bytes: text = perform_ocr_on_pdf_bytes(f_bytes.read(), file_name)
+#             elif file_type == 'handwritten':
 #                 with open(file_path, 'rb') as f_bytes: file_bytes = f_bytes.read()
 #                 if file_path.lower().endswith('.pdf'):
 #                     status_area.info(f"OCR handwritten PDF: {file_name}... [{i+1}/{total_files}]")
-#                     text = perform_ocr_on_pdf_bytes(file_bytes, file_name) # Rate-limited
+#                     text = perform_ocr_on_pdf_bytes(file_bytes, file_name)
 #                 else:
 #                     status_area.info(f"OCR handwritten image: {file_name}... [{i+1}/{total_files}]")
-#                     text = perform_ocr_on_image_bytes(file_bytes, file_name) # Rate-limited
-#             elif file_type == 'Image': # Directly uses rate-limited OCR
+#                     text = perform_ocr_on_image_bytes(file_bytes, file_name)
+#             elif file_type == 'Image':
 #                 status_area.info(f"OCR image: {file_name}... [{i+1}/{total_files}]")
-#                 with open(file_path, 'rb') as f_bytes: text = perform_ocr_on_image_bytes(f_bytes.read(), file_name) # Rate-limited
+#                 with open(file_path, 'rb') as f_bytes: text = perform_ocr_on_image_bytes(f_bytes.read(), file_name)
 #             elif file_type == 'CSV': text = extract_text_from_csv_path(file_path)
 #             elif file_type == 'JSON': text = extract_text_from_json_path(file_path)
 #             elif file_type == 'website':
@@ -807,8 +870,7 @@ if __name__ == "__main__":
             
 #             if text and text.strip(): all_extracted_documents.append({'name': file_name, 'type': file_type, 'text': text})
 #             elif text is None and (file_type == 'handwritten' or file_type == 'Image' or (file_type == 'PDF' and (not text or len(text.strip()) < 50))):
-#                 # This means OCR was attempted but failed, possibly due to rate limit
-#                 st.warning(f"OCR for '{file_name}' might have been skipped or failed (e.g., rate limit).")
+#                 st.warning(f"OCR for '{file_name}' might have been skipped or failed (e.g., rate limit or API issue).")
 #             else: st.warning(f"No usable text from: {file_name}")
 #         except Exception as e: st.error(f"Error processing {file_name}: {e}")
 #         progress_bar.progress((i + 1) / total_files)
@@ -829,7 +891,6 @@ if __name__ == "__main__":
 #         except Exception as e:
 #             st.error(f"Failed to create vector store: {e}"); return None
 
-# # ... (display_chat_message and main function remain the same as your last provided version)
 # def display_chat_message(role, content, sources=None, timestamp=None):
 #     avatar_char = "U" if role == "user" else "A"; message_class = "user-message" if role == "user" else "assistant-message"
 #     avatar_html = f"<div class='avatar'>{avatar_char}</div>"
@@ -860,17 +921,16 @@ if __name__ == "__main__":
 #     if 'vector_store' not in st.session_state: st.session_state.vector_store = None
 #     if 'conversation_chain' not in st.session_state: st.session_state.conversation_chain = None
 #     if 'current_collection_name' not in st.session_state: st.session_state.current_collection_name = None
-#     # Initialize session_id if not present (alternative to IP if IP is unreliable)
+    
 #     if 'session_id' not in st.session_state:
 #         st.session_state.session_id = str(time.time()) + "_" + str(os.urandom(4).hex())
-
 
 #     sidebar = st.sidebar
 #     with sidebar:
 #         st.header("⚙️ Controls & Uploads"); st.subheader("1. Add Sources")
 #         with st.container():
 #             tab_files, tab_website, tab_handwritten = st.tabs(["📁 Files", "🌐 Website", "✍️ Handwritten"])
-#             with tab_files: # File Uploader Logic
+#             with tab_files:
 #                 regular_uploaded_files = st.file_uploader("Upload PDF, CSV, JSON, or Image files", type=["pdf", "csv", "json", "png", "jpg", "jpeg"], accept_multiple_files=True, key="file_uploader_sidebar")
 #                 if regular_uploaded_files:
 #                     new_files_added=False
@@ -882,7 +942,7 @@ if __name__ == "__main__":
 #                                 st.session_state.uploaded_files.append({"name": uploaded_file.name, "type": file_type_str, "path": file_path, "size": f"{uploaded_file.size / (1024*1024):.2f} MB"})
 #                                 new_files_added=True
 #                     if new_files_added: st.rerun()
-#             with tab_website: # Website URL Logic
+#             with tab_website:
 #                 website_url = st.text_input("Enter website URL", key="website_url_input_sidebar")
 #                 if st.button("Add Website URL", key="add_website_button_sidebar"):
 #                     if website_url and not any(f['name'] == website_url for f in st.session_state.uploaded_files):
@@ -892,22 +952,22 @@ if __name__ == "__main__":
 #                             try:
 #                                 with open(fp,"w",encoding="utf-8") as f: f.write(text)
 #                                 st.session_state.uploaded_files.append({"name":website_url,"type":"website","path":fp,"size":f"{len(text)/(1024*1024):.2f} MB"})
-#                                 st.rerun()
+#                                 st.experimental_rerun() # Corrected from st.experimental_rerun()
 #                             except Exception as e: st.error(f"Could not save website text: {e}")
 #                         else: st.error(f"Could not extract text from {website_url}")
 #                     elif not website_url: st.warning("Please enter a URL.")
 #                     else: st.warning(f"Website {website_url} already in list.")
-#             with tab_handwritten: # Handwritten File Logic
+#             with tab_handwritten:
 #                 handwritten_file = st.file_uploader("Upload handwritten notes (image/PDF)", type=["png","jpg","jpeg","pdf"], key="handwritten_uploader_sidebar")
 #                 if handwritten_file and st.button("Add Handwritten Document", key="add_handwritten_button_sidebar"):
 #                     if not any(f['name'] == handwritten_file.name for f in st.session_state.uploaded_files):
 #                         file_path = save_uploaded_file(handwritten_file)
 #                         if file_path:
 #                             st.session_state.uploaded_files.append({"name":handwritten_file.name,"type":"handwritten","path":file_path,"size":f"{handwritten_file.size/(1024*1024):.2f} MB"})
-#                             st.rerun()
+#                             st.rerun() # Corrected from st.experimental_rerun()
 #                     else: st.warning(f"File {handwritten_file.name} already in list.")
 #         st.subheader("2. Manage Source List")
-#         if st.session_state.uploaded_files: # Manage Source List Display
+#         if st.session_state.uploaded_files:
 #             st.caption(f"Current sources: {len(st.session_state.uploaded_files)}")
 #             files_to_remove_indices = []
 #             for i, file_info in enumerate(st.session_state.uploaded_files[:5]):
@@ -922,12 +982,12 @@ if __name__ == "__main__":
 #                     try: 
 #                         if os.path.exists(rm_file['path']): os.remove(rm_file['path'])
 #                     except Exception as e: st.error(f"Error removing file '{rm_file['name']}': {e}")
-#                 st.rerun()
-#             st.markdown("---") # Process Button
+#                 st.rerun() # Corrected from st.experimental_rerun()
+#             st.markdown("---")
 #             if st.button("⚙️ Process Sources for Chat",type="primary",use_container_width=True,disabled=not st.session_state.uploaded_files): process_documents_for_rag()
 #         else: st.info("Upload documents via tabs above to begin.")
     
-#     with st.container(): # Main Chat Area
+#     with st.container():
 #         st.header("💬 Chat Interface")
 #         if not st.session_state.vector_store or not st.session_state.conversation_chain:
 #             st.info("Welcome! Please upload and process documents using the sidebar to enable chat.")
@@ -935,7 +995,7 @@ if __name__ == "__main__":
 #         else:
 #             st.success(f"Knowledge Base Ready: **{st.session_state.current_collection_name}** ({len(st.session_state.uploaded_files)} source files)")
 #             st.markdown("<div class='chat-container' id='chat-container'>",unsafe_allow_html=True)
-#             if not st.session_state.messages: # Display Processed Docs or Welcome
+#             if not st.session_state.messages:
 #                 if st.session_state.uploaded_files:
 #                     st.markdown("<div class='processed-docs-container'><h4>Ready to Chat About:</h4>",unsafe_allow_html=True)
 #                     for doc_info in st.session_state.uploaded_files:
@@ -944,11 +1004,11 @@ if __name__ == "__main__":
 #                         st.markdown(f"<div class='processed-doc-item'>{emoji} <strong>{disp_name}</strong><span class='processed-doc-item-type'>({doc_info['type']})</span></div>",unsafe_allow_html=True)
 #                     st.markdown("<p class='chat-start-prompt'>Ask a question below to start chatting.</p></div>",unsafe_allow_html=True)
 #                 else: display_chat_message("assistant","Knowledge base is ready. How can I help?",timestamp=datetime.datetime.now())
-#             else: # Display Chat Messages
+#             else:
 #                 for msg_data in st.session_state.messages: display_chat_message(msg_data["role"],msg_data["content"],msg_data.get("sources"),msg_data.get("timestamp"))
 #             st.markdown("</div>",unsafe_allow_html=True)
             
-#     if prompt := st.chat_input("Ask a question...", key=f"chat_input_{st.session_state.current_collection_name}"): # Chat Input Logic
+#     if prompt := st.chat_input("Ask a question...", key=f"chat_input_{st.session_state.current_collection_name}"):
 #         if not st.session_state.vector_store or not st.session_state.conversation_chain: st.warning("Please process documents first.")
 #         else:
 #             user_ts=datetime.datetime.now(); st.session_state.messages.append({"role":"user","content":prompt,"timestamp":user_ts})
@@ -956,7 +1016,8 @@ if __name__ == "__main__":
 #             assistant_ts=datetime.datetime.now()
 #             if answer is not None: st.session_state.messages.append({"role":"assistant","content":answer,"sources":sources,"timestamp":assistant_ts})
 #             else: st.session_state.messages.append({"role":"assistant","content":"Sorry, I encountered an issue. Please try again.","timestamp":assistant_ts})
-#             st.rerun()
+#             st.rerun() # Corrected from st.experimental_rerun()
 
 # if __name__ == "__main__":
 #     main()
+
