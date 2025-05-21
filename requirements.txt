@@ -1,3 +1,4 @@
+
 # Core Requirements
 streamlit==1.33.0
 python-dotenv==1.0.0
@@ -10,7 +11,7 @@ beautifulsoup4==4.12.2
 Pillow==10.3.0
 
 # Google Vision OCR
-google-cloud-vision==3.4.6
+google-cloud-vision==3.4.5
 requests==2.31.0
 
 # Vector Database & Embeddings
@@ -20,8 +21,8 @@ sentence-transformers==2.7.0
 tiktoken==0.6.0
 
 # LLM Integration
-langchain-groq==0.1.1
-groq==0.3.0
+langchain-groq==0.1.2
+groq>=0.5.0 
 
 # Text Processing
 langchain==0.1.16
