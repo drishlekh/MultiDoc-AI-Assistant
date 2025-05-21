@@ -16,7 +16,7 @@ requests==2.31.0
 
 # Vector Database & Embeddings
 langchain-community==0.0.34
-chromadb==0.4.24
+chromadb==0.4.22
 sentence-transformers==2.7.0
 tiktoken==0.6.0
 pysqlite3-binary
