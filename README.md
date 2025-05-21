@@ -1,6 +1,6 @@
 # MultiDoc-AI-Assistant
 
-*Live Demo: [_https://multidoc-ai-assistant-project.streamlit.app/_](https://multidoc-ai-assistant-project.streamlit.app/)*
+*Live Link: [_https://multidoc-ai-assistant-project.streamlit.app/_](https://multidoc-ai-assistant-project.streamlit.app/)*
 
 MultiDoc-AI-Assistant is an intelligent application that allows you to build a knowledge base from various document types (PDFs, CSVs, JSON, websites, handwritten notes/images) and then chat with this knowledge base using a conversational AI. It leverages Retrieval Augmented Generation (RAG) to provide contextually relevant answers based on your uploaded sources.
 
