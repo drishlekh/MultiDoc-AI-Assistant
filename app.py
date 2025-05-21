@@ -1,3 +1,13 @@
+
+try:
+    __import__('pysqlite3')
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+    print("Successfully patched sqlite3 with pysqlite3-binary.")
+except ImportError:
+    print("pysqlite3-binary not found or import failed. Using system sqlite3.")
+# --- END HACK ---
+
 import os
 import streamlit as st
 from PyPDF2 import PdfReader
