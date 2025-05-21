@@ -19,6 +19,7 @@ langchain-community==0.0.34
 chromadb==0.4.24
 sentence-transformers==2.7.0
 tiktoken==0.6.0
+pysqlite3-binary
 
 # LLM Integration
 langchain-groq==0.1.2
